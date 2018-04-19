@@ -45,22 +45,10 @@ while(1){
     $rcv_message = rcv_explode($buf);
     if(get_msg_type($rcv_message[0]) == "AR_AP_NOTIFICATION"){
         $header = parse_header($rcv_message[0]);
-	      $sql = "INSERT INTO ar_ap_notification (msg_id, ap_eth_mac_addr) 
+	$sql = "INSERT INTO ar_ap_notification (msg_id, ap_eth_mac_addr) 
         VALUES ('".bin2hex($header[1])."', '".bin2hex($header[5])."') 
         ON DUPLICATE KEY UPDATE msg_id='".bin2hex($header[1])."'";
       	if($conn->query($sql) != TRUE) die("DB Error: ".$sql." - " . $conn->error);        
-        unset($apList);  
-        $apList = array();
-        $sql = "SELECT id,ap_eth_mac_addr FROM ar_ap_notification";
-        $result = $conn->query($sql);
-        if ($result->num_rows > 0) {  
-            while($row = $result->fetch_assoc()) {
-                $apList[] = $row;
-            }
-        }
-        echo "new ap \n";
-        echo "apList reloaded \n";
-        echo "apList size: " . sizeof($apList) . "\n";  
       	// Prepare ACK message
 	      $ack_header_fields = $header;
 	      // Set message type to ACK (0x0010)
@@ -74,6 +62,22 @@ while(1){
 	      // echo "---> ACK: ".bin2hex($ack_header)." - ".bin2hex($ack_checksum)."\n";	
         // Send ack message
       	socket_sendto($sock, $ack_message , strlen($ack_message) , 0 , $remote_ip , $remote_port);
+	echo "--------------- \n";
+        echo "AP Notification \n";        
+        $not++;
+        echo "notifications since daemon start: " . $not . "\n"; 
+        unset($apList);  
+        $apList = array();
+        $sql = "SELECT id,ap_eth_mac_addr FROM ar_ap_notification";
+        $result = $conn->query($sql);
+        if ($result->num_rows > 0) {  
+            while($row = $result->fetch_assoc()) {
+                $apList[] = $row;
+            }
+        }               
+        echo "apList reloaded \n";
+        echo "apList size: " . sizeof($apList) . "\n"; 
+        echo "--------------- \n";  
     } // end of AR_AP_NOTIFICATION section
     if(!empty($apList)){
         if(get_msg_type($rcv_message[0]) == "AR_COMPOUND_MESSAGE_REPORT"){
@@ -108,11 +112,21 @@ while(1){
                             			'".$ts."' 
                             			)";
                                 if($conn->query($sql) != TRUE) die("DB Error: ".$sql." - " . $conn->error);
-                            }
-                        } 
-        	          }
-                }
-        	  }
+				$ok++;
+                                if($ok % 1000 == 0){
+                                    $t =  $blacklisted + $genmac + $conap;
+                                    echo "saved: " . $ok . " | not saved: " . $t . "  [ b: " . $blacklisted . " | r: " . $genmac . " | ap: " . $conap . " ]\n";
+				} else {
+                                	$blacklisted++;
+                            	}
+                        } else {
+                        	$genmac++;
+                        }  
+        	   } else {                    
+                   	$conap++;
+                   }
+               }
+       	    }
         }
     }
 }
