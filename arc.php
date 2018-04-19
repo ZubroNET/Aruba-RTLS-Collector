@@ -21,6 +21,11 @@ else echo "Socket bind OK \n";
 $apList = array();
 $blacklist = array();
 date_default_timezone_set("Europe/Prague"); 
+$blacklisted = 0;
+$ok = 0;
+$conap = 0;
+$genmac = 0;
+$not = 0;
 $sql = "SELECT id,ap_eth_mac_addr FROM ar_ap_notification";
 $result = $conn->query($sql);
 if ($result->num_rows > 0) {  
@@ -49,18 +54,11 @@ while(1){
         VALUES ('".bin2hex($header[1])."', '".bin2hex($header[5])."') 
         ON DUPLICATE KEY UPDATE msg_id='".bin2hex($header[1])."'";
       	if($conn->query($sql) != TRUE) die("DB Error: ".$sql." - " . $conn->error);        
-      	// Prepare ACK message
-	      $ack_header_fields = $header;
-	      // Set message type to ACK (0x0010)
-	      $ack_header_fields[0] = hex2bin("0010");
-        // Create header from array of fields
-	      $ack_header = implode("",$ack_header_fields);
-	      // Create sha1 hash of header
-	      $ack_checksum = hex2bin(hash_hmac('sha1', $ack_header, AR_KEY));
-	      // Make whole ack message
+	$ack_header_fields = $header;
+	$ack_header_fields[0] = hex2bin("0010");
+	$ack_header = implode("",$ack_header_fields);
+	$ack_checksum = hex2bin(hash_hmac('sha1', $ack_header, AR_KEY));
         $ack_message = $ack_header.$ack_checksum;
-	      // echo "---> ACK: ".bin2hex($ack_header)." - ".bin2hex($ack_checksum)."\n";	
-        // Send ack message
       	socket_sendto($sock, $ack_message , strlen($ack_message) , 0 , $remote_ip , $remote_port);
 	echo "--------------- \n";
         echo "AP Notification \n";        
@@ -78,54 +76,51 @@ while(1){
         echo "apList reloaded \n";
         echo "apList size: " . sizeof($apList) . "\n"; 
         echo "--------------- \n";  
-    } // end of AR_AP_NOTIFICATION section
+    }
     if(!empty($apList)){
         if(get_msg_type($rcv_message[0]) == "AR_COMPOUND_MESSAGE_REPORT"){
             $msg_count = hexdec(bin2hex(substr($rcv_message[1],0,2))); //little complicated because simple bindec() does not work here
-    	      //echo "\tHDR:".bin2hex(substr($rcv_message[1],0,4))." - dec: ".$msg_count."\n";
-           	for($i=0; $i<$msg_count; $i++){
-        	      $offset = 4 + ($i * 44);
-        	      $size = 44;
-        	      // cut one sub-message from payload
-        	      $sub_buf = substr($rcv_message[1],$offset,$size);
-        	      // explode it to header, payload
-        	      $sub_message[0] = substr($sub_buf, 0, 16);	//16 byte - header
-        	      $sub_message[1] = substr($sub_buf, 16);		//rest is payload    
-        	      if(get_msg_type($sub_message[0]) == "AR_STATION_REPORT"){
-        		        $sub_header = parse_header($sub_message[0]);
-        		        $data = parse_stationreport($sub_message[1]);   
-                    if (bin2hex($data[5]) == "01"){   
-                        preg_match("/(^[0-9a-fA-F]{1}(2|6|a|A|e|E){1}[0-9a-fA-F]{10})/", bin2hex($data[0]), $check);
-                        if(empty($check)){ 
-                            $mal = substr(bin2hex($data[0]),0,6);
-                            $mam = substr(bin2hex($data[0]),0,8);
-                            $mas = substr(bin2hex($data[0]),0,10);                       
-                            $blacklistMatch = preg_grep("/((\b($mal)\b)|(\b($mam)\b)|(\b($mas)\b))/i", $blacklist);
-                            if(empty($blacklistMatch)){                                          
-                                $ts = time() - hexdec(bin2hex($data[9]));                    
-                                $apIndex = array_search(bin2hex($sub_header[5]),array_column($apList,'ap_eth_mac_addr'));
-                                $ap = $apList[$apIndex]['id'];                  
-                            		$sql = "INSERT IGNORE INTO ar_station_report (ap,sta_eth_mac,mon_bssid,ts) 
-                            			VALUES ('".$ap."',
-                            			'".bin2hex($data[0])."',
-                            			'".bin2hex($data[8])."', 
-                            			'".$ts."' 
-                            			)";
-                                if($conn->query($sql) != TRUE) die("DB Error: ".$sql." - " . $conn->error);
-				$ok++;
-                                if($ok % 1000 == 0){
-                                    $t =  $blacklisted + $genmac + $conap;
-                                    echo "saved: " . $ok . " | not saved: " . $t . "  [ b: " . $blacklisted . " | r: " . $genmac . " | ap: " . $conap . " ]\n";
-				} else {
-                                	$blacklisted++;
-                            	}
-                        } else {
-                        	$genmac++;
-                        }  
-        	   } else {                    
-                   	$conap++;
-                   }
-               }
+            for($i=0; $i<$msg_count; $i++){
+       	    	$offset = 4 + ($i * 44);
+            	$size = 44;
+        	$sub_buf = substr($rcv_message[1],$offset,$size);
+        	$sub_message[0] = substr($sub_buf, 0, 16);	//16 byte - header
+        	$sub_message[1] = substr($sub_buf, 16);		//rest is payload    
+        	if(get_msg_type($sub_message[0]) == "AR_STATION_REPORT"){
+        		$sub_header = parse_header($sub_message[0]);
+        		$data = parse_stationreport($sub_message[1]);   
+                    	if (bin2hex($data[5]) == "01"){   
+                        	preg_match("/(^[0-9a-fA-F]{1}(2|6|a|A|e|E){1}[0-9a-fA-F]{10})/", bin2hex($data[0]), $check);
+                        	if(empty($check)){ 
+                            		$mal = substr(bin2hex($data[0]),0,6);
+                            		$mam = substr(bin2hex($data[0]),0,8);
+                            		$mas = substr(bin2hex($data[0]),0,10);                       
+                            		$blacklistMatch = preg_grep("/((\b($mal)\b)|(\b($mam)\b)|(\b($mas)\b))/i", $blacklist);
+                            		if(empty($blacklistMatch)){                                          
+                                		$ts = time() - hexdec(bin2hex($data[9]));                    
+                                		$apIndex = array_search(bin2hex($sub_header[5]),array_column($apList,'ap_eth_mac_addr'));
+                                		$ap = $apList[$apIndex]['id'];                  
+                            			$sql = "INSERT IGNORE INTO ar_station_report (ap,sta_eth_mac,mon_bssid,ts) 
+                            					VALUES ('".$ap."',
+                            					'".bin2hex($data[0])."',
+                            					'".bin2hex($data[8])."', 
+                            					'".$ts."')";
+                                		if($conn->query($sql) != TRUE) die("DB Error: ".$sql." - " . $conn->error);
+						$ok++;
+                                		if($ok % 1000 == 0){
+                                    			$t =  $blacklisted + $genmac + $conap;
+                                    			echo "saved: " . $ok . " | not saved: " . $t . "  [ b: " . $blacklisted . " | r: " . $genmac . " | ap: " . $conap . " ]\n";
+						}
+					} else {
+                                		$blacklisted++;
+					}
+                        	} else {
+                        		$genmac++;
+                        	}  
+			 } else {                    
+                   	 	$conap++;				
+                   	 }
+               	}
        	    }
         }
     }
